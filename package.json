@@ -1,0 +1,19 @@
+{
+  "name": "rio-onibus-tracker",
+  "version": "1.0.0",
+  "description": "Mapa em tempo real dos ônibus do Rio de Janeiro (dados GPS abertos da Prefeitura do Rio)",
+  "main": "server.js",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.116.0",
+    "express": "^4.19.2",
+    "jszip": "^3.10.1"
+  }
+}

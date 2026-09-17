@@ -1,0 +1,1833 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>Cadê meu busão?</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+<style>
+  :root {
+    --bg: #0f172a;
+    --panel: #ffffff;
+    --text: #1e293b;
+    --muted: #64748b;
+    --accent: #2563eb;
+    --danger: #dc2626;
+    --border: #e2e8f0;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    height: 100%;
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    /* Impede o gesto de pinça/duplo-toque de dar zoom na página inteira —
+       o mapa (Leaflet) continua com seu próprio zoom por pinça, que não
+       depende do zoom nativo da página/navegador. */
+    touch-action: manipulation;
+  }
+  #map { position: absolute; inset: 0; z-index: 0; }
+
+  #panel {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    z-index: 1000;
+    background: var(--panel);
+    border-radius: 12px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+    padding: 14px 16px;
+    width: fit-content;
+    max-width: calc(100vw - 24px);
+    color: var(--text);
+    touch-action: manipulation;
+  }
+  #panel h1 {
+    font-size: 15px;
+    margin: 0 0 10px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  #panel h1 .dot {
+    width: 8px; height: 8px; border-radius: 50%; background: #16a34a;
+    box-shadow: 0 0 0 0 rgba(22,163,74,.6);
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse {
+    0% { box-shadow: 0 0 0 0 rgba(22,163,74,.5); }
+    70% { box-shadow: 0 0 0 6px rgba(22,163,74,0); }
+    100% { box-shadow: 0 0 0 0 rgba(22,163,74,0); }
+  }
+  .input-wrap { position: relative; margin-bottom: 2px; }
+  .search-row { display: flex; gap: 6px; }
+  #linhasInput {
+    width: 13ch;
+    flex: 0 0 auto;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 14px;
+    text-transform: uppercase;
+  }
+  #linhasInput:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+  #suggestions {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    margin-top: 2px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    box-shadow: 0 6px 16px rgba(0,0,0,0.12);
+    max-height: 168px;
+    overflow-y: auto;
+    z-index: 2000;
+  }
+  #suggestions .item {
+    padding: 7px 10px;
+    font-size: 13px;
+    cursor: pointer;
+  }
+  #suggestions .item:hover { background: #eff6ff; color: var(--accent); }
+
+  #linhaStatus {
+    font-size: 11px;
+    min-height: 15px;
+    margin: -2px 0 2px;
+    line-height: 1.3;
+    /* Largura máxima pra quebrar linha em vez de forçar o header (agora
+       width: fit-content, só a largura mínima necessária) a esticar pra
+       caber uma frase inteira numa linha só. */
+    max-width: 220px;
+  }
+  #linhaStatus.found { color: #16a34a; }
+  #linhaStatus.warning { color: #b45309; }
+  #linhaStatus.notfound { color: var(--muted); }
+
+  #bottomBar {
+    position: fixed;
+    left: 12px;
+    bottom: 12px;
+    z-index: 999;
+    background: var(--panel);
+    border-radius: 12px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+    padding: 10px 12px;
+    width: fit-content;
+    max-width: calc(100vw - 24px);
+    touch-action: manipulation;
+    display: none;
+  }
+  #bottomBar.visible { display: block; }
+  #bottomBar .bottom-bar-title {
+    font-size: 11px;
+    color: var(--muted);
+    margin-bottom: 6px;
+  }
+  .bottom-bar-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-height: 220px;
+    overflow-y: auto;
+    padding-right: 2px;
+  }
+  .linha-chip {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    background: #f1f5f9;
+    border-radius: 999px;
+    padding: 3px 4px 3px 8px;
+    font-size: 12px;
+    line-height: 1.4;
+    user-select: none;
+    transition: opacity 0.15s;
+    width: 100%;
+  }
+  .linha-chip .linha-nome { flex: 1; }
+  .linha-chip.inativa { opacity: 0.4; }
+  .linha-chip .swatch {
+    width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; cursor: pointer;
+  }
+  .linha-chip .linha-nome { cursor: pointer; font-weight: 600; }
+  .linha-chip .pin-btn {
+    border: none;
+    background: transparent;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 2px 4px;
+    border-radius: 50%;
+  }
+  .linha-chip .pin-btn:hover { background: #e2e8f0; color: var(--danger); }
+  .linha-chip .flip-btn {
+    border: none;
+    background: #dbeafe;
+    color: var(--accent);
+    font-size: 17px;
+    font-weight: 800;
+    line-height: 1;
+    cursor: pointer;
+    padding: 4px 7px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .linha-chip .flip-btn:hover:not(:disabled) { background: #bfdbfe; }
+  .linha-chip .flip-btn:disabled { opacity: 0.3; cursor: default; background: transparent; color: var(--muted); }
+
+  button {
+    font: inherit;
+    cursor: pointer;
+    border: none;
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  #applyBtn {
+    background: var(--accent);
+    color: white;
+    flex: 0 0 auto;
+    width: 40px;
+    padding: 8px;
+    font-size: 16px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  #applyBtn:hover { background: #1d4ed8; }
+  #applyBtn:disabled { cursor: not-allowed; }
+  /* Enquanto a busca de uma linha está em andamento (fetch do traçado
+     oficial), o botão de lupa pulsa pra indicar que tá processando — o
+     campo de texto fica travado (disabled) com o código ainda preenchido,
+     só limpando depois que a busca terminar. */
+  #applyBtn.loading {
+    animation: applyPulse 1s ease-in-out infinite;
+  }
+  @keyframes applyPulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.55; transform: scale(0.88); }
+  }
+  #linhasInput:disabled {
+    background: #f1f5f9;
+    color: var(--muted);
+    cursor: not-allowed;
+  }
+  .auto-refresh-note { font-size: 12px; color: var(--muted); margin: 0 0 8px; }
+  .leaflet-popup-content { font-size: 13px; }
+  .leaflet-popup-content b { color: var(--accent); }
+
+  #routeInfo {
+    margin-top: 6px;
+    border-top: 1px solid var(--border);
+    padding-top: 6px;
+  }
+  #routeInfoText {
+    font-size: 12px;
+    color: var(--muted);
+    margin-bottom: 6px;
+    line-height: 1.4;
+    /* Mesmo motivo do #linhaStatus: sem isso, uma descrição de itinerário
+       longa esticaria o header inteiro pra caber numa linha só. */
+    max-width: 220px;
+  }
+  #closeRouteBtn {
+    background: #f1f5f9;
+    color: var(--text);
+    width: 100%;
+  }
+  #closeRouteBtn:hover { background: #e2e8f0; }
+
+  .user-location-icon { pointer-events: none; }
+  .user-location-dot {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--accent);
+    border: 3px solid #ffffff;
+    box-shadow: 0 0 0 2px rgba(37,99,235,0.35), 0 2px 6px rgba(0,0,0,0.3);
+  }
+
+  .bus-arrow-icon {
+    pointer-events: auto;
+    /* Move suavemente pra nova posição a cada atualização, em vez de saltar
+       instantaneamente. Leaflet reposiciona o marcador ajustando este
+       transform (translate3d), então a transição é só CSS puro. */
+    transition: transform 1s linear;
+  }
+  .bus-arrow-icon .arrow-wrap {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 1s linear;
+  }
+  /* Durante animação de zoom o Leaflet recalcula a posição de todo marcador
+     de uma vez (mudança grande de pixels) — sem isso a transição acima
+     causaria um "arrastão" visual feio nos marcadores durante o zoom. */
+  #map.zooming .bus-arrow-icon,
+  #map.zooming .bus-arrow-icon .arrow-wrap {
+    transition: none;
+  }
+
+  @media (max-width: 480px) {
+    #panel { max-height: 62vh; overflow-y: auto; }
+    #bottomBar { padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px)); }
+  }
+
+  /* --- Barreira de login (e-mail + código) --- */
+  #authGate {
+    position: fixed;
+    inset: 0;
+    z-index: 5000;
+    background: linear-gradient(160deg, #0f172a 0%, #1e293b 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 16px;
+  }
+  body.authed #authGate { display: none; }
+  /* Enquanto não autenticado, nada do mapa/painel fica no DOM visível —
+     evita qualquer flash do conteúdo antes do login, e evita o Leaflet
+     inicializar num #map ainda escondido (mediria tamanho 0). */
+  body:not(.authed) #map,
+  body:not(.authed) #panel,
+  body:not(.authed) #bottomBar { display: none; }
+
+  .auth-box {
+    background: var(--panel);
+    border-radius: 14px;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.35);
+    padding: 24px 22px;
+    width: 100%;
+    max-width: 320px;
+    color: var(--text);
+  }
+  .auth-box h1 { font-size: 17px; margin: 0 0 4px; display: flex; align-items: center; gap: 8px; }
+  .auth-sub { font-size: 12px; color: var(--muted); margin: 0 0 16px; line-height: 1.4; }
+  #authGate label { font-size: 12px; color: var(--muted); display: block; margin-bottom: 4px; }
+  #authGate input {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 14px;
+    margin-bottom: 10px;
+  }
+  #authGate input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  #authCodeInput { letter-spacing: 4px; text-align: center; font-size: 18px; font-weight: 700; }
+  #authGate button[type="button"]:not(.link-btn) {
+    width: 100%;
+    background: var(--accent);
+    color: #fff;
+    padding: 10px 12px;
+  }
+  #authGate button[type="button"]:not(.link-btn):hover { background: #1d4ed8; }
+  #authGate button:disabled { opacity: 0.6; cursor: not-allowed; }
+  .auth-links { display: flex; justify-content: space-between; margin-top: 8px; }
+  .link-btn {
+    background: transparent !important;
+    color: var(--accent) !important;
+    width: auto !important;
+    padding: 4px 0 !important;
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .link-btn:hover { text-decoration: underline; }
+  .auth-msg { font-size: 12px; margin-top: 10px; line-height: 1.4; color: var(--muted); min-height: 15px; }
+  .auth-msg.error { color: var(--danger); }
+
+  .auth-divider {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 14px 0 10px;
+    font-size: 10px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .auth-divider::before, .auth-divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+  #authAnonBtn {
+    width: 100%;
+    background: #f1f5f9;
+    color: var(--text);
+  }
+  #authAnonBtn:hover { background: #e2e8f0; }
+  .auth-anon-note { font-size: 11px; color: var(--muted); margin-top: 8px; line-height: 1.4; }
+
+  .logout-btn {
+    margin-left: auto;
+    background: transparent;
+    border: none;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 6px;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .logout-btn:hover { background: #f1f5f9; color: var(--danger); }
+</style>
+</head>
+<body>
+
+<div id="authGate">
+  <div class="auth-box">
+    <h1><span class="dot"></span> Cadê meu busão?</h1>
+    <p class="auth-sub">Acesso por e-mail — a gente manda um código de 6 dígitos pra você entrar.</p>
+    <div id="authEmailStep">
+      <label for="authEmailInput">Seu e-mail</label>
+      <input id="authEmailInput" type="email" placeholder="voce@exemplo.com" autocomplete="email" />
+      <button id="authSendBtn" type="button">Enviar código</button>
+      <div class="auth-divider">ou</div>
+      <button id="authAnonBtn" type="button">Entrar sem e-mail</button>
+      <div class="auth-anon-note">Acesso rápido, sem cadastro — fica associado a um usuário anônimo só deste navegador (não sincroniza entre aparelhos).</div>
+    </div>
+    <div id="authCodeStep" hidden>
+      <label for="authCodeInput">Código recebido por e-mail</label>
+      <input id="authCodeInput" type="text" inputmode="numeric" maxlength="6" placeholder="000000" autocomplete="one-time-code" />
+      <button id="authVerifyBtn" type="button">Confirmar código</button>
+      <div class="auth-links">
+        <button id="authResendBtn" type="button" class="link-btn">Reenviar código</button>
+        <button id="authBackBtn" type="button" class="link-btn">Trocar e-mail</button>
+      </div>
+    </div>
+    <div id="authMsg" class="auth-msg"></div>
+  </div>
+</div>
+
+<div id="map"></div>
+
+<div id="panel">
+  <h1><span class="dot"></span> Cadê meu busão? <button id="logoutBtn" type="button" class="logout-btn" title="Sair da conta">Sair</button></h1>
+  <div class="input-wrap">
+    <div class="search-row">
+      <input id="linhasInput" type="text" placeholder="Linha" maxlength="8" size="8" autocomplete="off" />
+      <button id="applyBtn" type="button" title="Buscar e acompanhar essa linha" aria-label="Buscar linha">🔍</button>
+    </div>
+    <div id="suggestions" hidden></div>
+  </div>
+  <div id="linhaStatus"></div>
+  <div id="refreshNote" class="auto-refresh-note">Próx. atualização em 20s</div>
+  <div id="routeInfo" hidden>
+    <div id="routeInfoText"></div>
+    <button id="closeRouteBtn" type="button">Fechar itinerário</button>
+  </div>
+</div>
+
+<div id="bottomBar">
+  <div class="bottom-bar-title">Linhas</div>
+  <div class="bottom-bar-list"></div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script>
+(function () {
+  // --- Autenticação (e-mail + código) ---
+  // URL e chave "anon" do Supabase não são segredo: a mesma dupla é usada
+  // em lib/supabaseAuth.js no servidor. Quem protege os dados é o Row
+  // Level Security configurado no banco, não o sigilo dessas duas strings.
+  const SUPABASE_URL = 'https://uqpcxkcpfldnszrmwsbp.supabase.co';
+  const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVxcGN4a2NwZmxkbnN6cm13c2JwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk2NjA1MDgsImV4cCI6MjEwNTIzNjUwOH0.vm-1_YYgpyzQqzk9ZK_O_ixrcaH6JCgU49q0W29JcHA';
+  const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+  const authEmailStepEl = document.getElementById('authEmailStep');
+  const authCodeStepEl = document.getElementById('authCodeStep');
+  const authEmailInput = document.getElementById('authEmailInput');
+  const authCodeInput = document.getElementById('authCodeInput');
+  const authSendBtn = document.getElementById('authSendBtn');
+  const authVerifyBtn = document.getElementById('authVerifyBtn');
+  const authResendBtn = document.getElementById('authResendBtn');
+  const authBackBtn = document.getElementById('authBackBtn');
+  const authAnonBtn = document.getElementById('authAnonBtn');
+  const authMsgEl = document.getElementById('authMsg');
+
+  let pendingEmail = '';
+  let appStarted = false;
+
+  function setAuthMsg(msg, isError) {
+    authMsgEl.textContent = msg || '';
+    authMsgEl.className = 'auth-msg' + (isError ? ' error' : '');
+  }
+
+  // Anexa o token da sessão atual (se houver) em toda chamada às rotas
+  // /api/* — o servidor exige isso (ver lib/supabaseAuth.js) pra garantir
+  // que a barreira de login não seja só cosmética.
+  async function authFetch(url, opts) {
+    opts = opts || {};
+    const { data } = await sb.auth.getSession();
+    const token = data && data.session && data.session.access_token;
+    const headers = Object.assign({}, opts.headers || {});
+    if (token) headers['Authorization'] = 'Bearer ' + token;
+    return fetch(url, Object.assign({}, opts, { headers }));
+  }
+
+  function showAuthed() {
+    document.body.classList.add('authed');
+    if (!appStarted) {
+      appStarted = true;
+      initApp();
+    }
+  }
+
+  async function sendCode(isResend) {
+    const email = authEmailInput.value.trim();
+    if (!email) { setAuthMsg('Digite seu e-mail.', true); return; }
+    pendingEmail = email;
+    authSendBtn.disabled = true;
+    authResendBtn.disabled = true;
+    setAuthMsg(isResend ? 'Reenviando código...' : 'Enviando código...');
+    try {
+      const { error } = await sb.auth.signInWithOtp({ email, options: { shouldCreateUser: true } });
+      if (error) throw error;
+      authEmailStepEl.hidden = true;
+      authCodeStepEl.hidden = false;
+      authCodeInput.value = '';
+      authCodeInput.focus();
+      setAuthMsg(`Código enviado para ${email}. Confira sua caixa de entrada (e o spam).`);
+    } catch (err) {
+      setAuthMsg('Não foi possível enviar o código: ' + err.message, true);
+    } finally {
+      authSendBtn.disabled = false;
+      authResendBtn.disabled = false;
+    }
+  }
+
+  async function verifyCode() {
+    const code = authCodeInput.value.trim();
+    if (!code) { setAuthMsg('Digite o código recebido.', true); return; }
+    authVerifyBtn.disabled = true;
+    setAuthMsg('Confirmando...');
+    try {
+      const { data, error } = await sb.auth.verifyOtp({ email: pendingEmail, token: code, type: 'email' });
+      if (error) throw error;
+      if (!data || !data.session) throw new Error('sessão não criada');
+      setAuthMsg('');
+      showAuthed();
+    } catch (err) {
+      setAuthMsg('Código inválido ou expirado: ' + err.message, true);
+    } finally {
+      authVerifyBtn.disabled = false;
+    }
+  }
+
+  // Alternativa ao login por e-mail: cria uma sessão anônima do Supabase
+  // (auth.signInAnonymously()). O usuário anônimo tem um ID único de
+  // verdade e passa pelas MESMAS políticas de RLS de um usuário
+  // autenticado por e-mail (auth.role() = 'authenticated' vale pros dois) —
+  // então nenhuma rota da API precisa distinguir os dois casos, ver
+  // lib/supabaseAuth.js. Só existe enquanto durar esse navegador/aba: sem
+  // e-mail vinculado, não dá pra recuperar a mesma conta depois de sair ou
+  // limpar os dados do site.
+  async function signInAnon() {
+    authAnonBtn.disabled = true;
+    authSendBtn.disabled = true;
+    setAuthMsg('Entrando...');
+    try {
+      const { data, error } = await sb.auth.signInAnonymously();
+      if (error) throw error;
+      if (!data || !data.session) throw new Error('sessão não criada');
+      setAuthMsg('');
+      showAuthed();
+    } catch (err) {
+      const msg = (err && err.message) || String(err);
+      if (/anonymous/i.test(msg)) {
+        setAuthMsg('Acesso sem e-mail ainda não foi habilitado neste projeto (falta ligar "Allow anonymous sign-ins" no painel do Supabase, em Authentication → Providers). Por enquanto, use o login por e-mail.', true);
+      } else {
+        setAuthMsg('Não foi possível entrar sem e-mail: ' + msg, true);
+      }
+    } finally {
+      authAnonBtn.disabled = false;
+      authSendBtn.disabled = false;
+    }
+  }
+
+  authAnonBtn.addEventListener('click', signInAnon);
+  authSendBtn.addEventListener('click', () => sendCode(false));
+  authResendBtn.addEventListener('click', () => sendCode(true));
+  authVerifyBtn.addEventListener('click', verifyCode);
+  authBackBtn.addEventListener('click', () => {
+    authCodeStepEl.hidden = true;
+    authEmailStepEl.hidden = false;
+    setAuthMsg('');
+  });
+  authCodeInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') verifyCode(); });
+  authEmailInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendCode(false); });
+
+  // Se o usuário deslogar (botão "Sair"), a forma mais simples e segura de
+  // voltar a um estado limpo (sem recriar o mapa Leaflet nem duplicar
+  // timers) é recarregar a página — ela volta a mostrar a barreira de login.
+  sb.auth.onAuthStateChange((event) => {
+    if (event === 'SIGNED_OUT') location.reload();
+  });
+
+  // Sessão já existente (voltou numa aba nova, ou recarregou a página) —
+  // pula direto pro app, sem pedir login de novo.
+  sb.auth.getSession().then(({ data }) => {
+    if (data && data.session) showAuthed();
+  });
+
+  function initApp() {
+  const RIO_CENTER = [-22.9068, -43.1729];
+  const map = L.map('map', { zoomControl: true }).setView(RIO_CENTER, 11);
+
+  // Basemap "Positron" da Carto — bem mais minimalista que o "Voyager"
+  // usado antes: sem contorno de construções/prédios e sem sombreado de
+  // relevo/acidentes geográficos, só o essencial (ruas e rótulos) num fundo
+  // claro. A Carto passou a exigir uma API key gratuita (plano free: 5
+  // milhões de requisições de tile/mês, sem cartão de crédito) — chave
+  // obtida em dashboard.basemaps.carto.com.
+  const CARTO_API_KEY = 'cb1_3nbs_1_47e647586c0039ea305411f7';
+  L.tileLayer(`https://{s}.basemaps.cartocdn.com/rastertiles/light_all/{z}/{x}/{y}.png?key=${CARTO_API_KEY}`, {
+    maxZoom: 20,
+    subdomains: 'abcd',
+    attribution: '&copy; <a href="https://carto.com/attributions">CARTO</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+  }).addTo(map);
+
+  // routeLayer: traçado do ônibus específico selecionado (clique no marcador) —
+  // fica por cima, com mais opacidade.
+  // linesRouteLayer: traçado "geral" de cada linha buscada/fixada (ida e
+  // volta), aparece assim que a linha é buscada, mesmo sem clicar em nenhum
+  // ônibus — fica por baixo, com menos opacidade, na cor da própria linha.
+  const linesRouteLayer = L.layerGroup().addTo(map);
+  const routeLayer = L.layerGroup().addTo(map);
+  let selectedOrdem = null;
+  let openPopupOrdem = null;
+
+  // Desliga a transição suave de posição dos marcadores durante animação de
+  // zoom (senão dá um "arrastão" visual feio).
+  const mapEl = document.getElementById('map');
+  map.on('zoomstart', () => mapEl.classList.add('zooming'));
+  map.on('zoomend', () => mapEl.classList.remove('zooming'));
+
+  // Localização do usuário: mostra um marcador "você está aqui" e centraliza
+  // o mapa nela na primeira vez que a posição chega — best-effort, se o
+  // navegador não suportar geolocalização ou o usuário negar a permissão o
+  // mapa continua funcionando normalmente (só sem esse marcador/centralização).
+  let userLocationMarker = null;
+  let userLocationCentered = false;
+  function userLocationIcon() {
+    return L.divIcon({
+      className: 'user-location-icon',
+      iconSize: [18, 18],
+      iconAnchor: [9, 9],
+      html: '<div class="user-location-dot"></div>',
+    });
+  }
+  if (navigator.geolocation) {
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const latlng = [pos.coords.latitude, pos.coords.longitude];
+        if (userLocationMarker) {
+          userLocationMarker.setLatLng(latlng);
+        } else {
+          userLocationMarker = L.marker(latlng, { icon: userLocationIcon(), zIndexOffset: 900 })
+            .addTo(map)
+            .bindPopup('Você está aqui');
+        }
+        if (!userLocationCentered) {
+          userLocationCentered = true;
+          map.setView(latlng, 15);
+        }
+      },
+      () => {
+        // silencioso — geolocalização é opcional
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  }
+
+  const linhasInput = document.getElementById('linhasInput');
+  const suggestionsEl = document.getElementById('suggestions');
+  const linhaStatusEl = document.getElementById('linhaStatus');
+  const applyBtn = document.getElementById('applyBtn');
+  const refreshNoteEl = document.getElementById('refreshNote');
+  const bottomBarEl = document.getElementById('bottomBar');
+  const bottomBarListEl = bottomBarEl.querySelector('.bottom-bar-list');
+  const routeInfoEl = document.getElementById('routeInfo');
+  const routeInfoTextEl = document.getElementById('routeInfoText');
+  const closeRouteBtn = document.getElementById('closeRouteBtn');
+
+  const POLL_MS = 20000;
+  const STALE_AFTER_MISSES = 3; // remove marcador se sumir por 3 ciclos seguidos
+  const TRAIL_MAX_POINTS = 300; // limite de pontos guardados por veículo no trajeto observado ao vivo
+
+  // ordem -> { marker, linha, missedCycles }
+  const markers = new Map();
+  // ordem -> [[lat, lon], ...] — histórico de posições reais observadas de
+  // cada veículo nesta sessão. Usado como fallback pra desenhar um trajeto
+  // aproximado quando a linha não tem itinerário oficial no GTFS (ex:
+  // LECD154) — não é o traçado oficial, só "por onde esse ônibus já passou".
+  const vehicleTrails = new Map();
+  let pollTimer = null;
+  let firstLoadDone = false;
+
+  // Contagem regressiva até a próxima atualização automática — calculada só
+  // com a diferença entre dois instantes (Date.now()), então nunca é afetada
+  // por fuso horário errado no navegador.
+  let nextPollAtMs = null;
+  let tickTimer = null;
+
+  const PALETTE = ['#2563eb', '#dc2626', '#16a34a', '#d97706', '#7c3aed', '#0891b2', '#db2777', '#65a30d', '#ea580c', '#4f46e5'];
+
+  // Cor por LINHA (código, maiúsculo) -> cor. Uma cor só por linha,
+  // compartilhada pelas duas direções (o traçado de ida/volta desenhado no
+  // mapa também usa essa cor) — as direções se distinguem pelo destino no
+  // nome do chip, não pela cor.
+  const lineColors = new Map();
+
+  // Linhas acompanhadas: chave = CÓDIGO da linha (ex: "415") -> {
+  //   code, rotas, directions: [{directionId, headsign}, ...], currentIndex, ativo
+  // }. Só UM sentido fica visível/rastreado por vez por linha (directions[currentIndex]) —
+  // o chip "⇄" alterna currentIndex entre os sentidos conhecidos (normalmente
+  // 2: ida e volta). Quando a linha não tem itinerário oficial no GTFS (ex:
+  // LECD154) ou não dá pra separar por direção, `directions` fica vazio e o
+  // app mostra/desenha tudo que tiver, sem filtro por sentido.
+  const trackedLines = new Map();
+
+  // Traçado do sentido ATUALMENTE selecionado de cada linha, chave = CÓDIGO
+  // (a mesma chave de trackedLines) -> array de L.Polyline. Ao trocar de
+  // sentido (⇄) o traçado antigo é removido e o do novo sentido é desenhado.
+  const lineRouteShapes = new Map();
+
+  // Traçado "deduzido" a partir do GPS ao vivo — usado como traçado de
+  // fundo pra linhas SEM itinerário oficial no GTFS (ex: LECD154, fora do
+  // cadastro do mês mas realmente circulando). Diferente do trajeto do
+  // ônibus selecionado (drawInferredTrail, mais abaixo, que só acompanha 1
+  // veículo), aqui a gente acumula as posições de TODOS os veículos da
+  // linha a cada ciclo, formando aos poucos um traçado aproximado da linha
+  // inteira — fica mais completo com o tempo, mesmo sem nenhum ônibus
+  // selecionado. Persistido no Supabase (tabela line_trails) e
+  // compartilhado entre todos os usuários logados — ver seedObservedTrail
+  // e syncObservedTrail, um pouco abaixo, e o README.
+  const lineObservedTrails = new Map(); // code -> [[lat, lon], ...] (plano, todos os veículos misturados em ordem de chegada — usado só pra buscar paradas próximas, ver ensureObservedStopsNear)
+  const lineObservedLayers = new Map(); // code -> [L.Polyline, ...] (vários segmentos — ver renderObservedLineTrail)
+  const lineObservedSynced = new Map(); // code -> quantos pontos ja foram enviados ao servidor
+
+  // Traçado deduzido, mas agrupado POR VEÍCULO (code -> Map(ordem -> [[lat,lon],...])).
+  // Só existe na memória desta sessão (não é persistido) — diferente de
+  // lineObservedTrails acima, que mistura as posições de todos os veículos
+  // da linha na ordem em que cada ciclo de polling os viu. Desenhar aquele
+  // array plano como uma única linha produzia zigues-zagues ligando ônibus
+  // geograficamente distantes (ex: um ônibus na Barra a outro em
+  // Copacabana). Agrupando por veículo, cada polyline desenhada é o
+  // trajeto real de UM ônibus só, então fica coerente desde o início —
+  // ver renderObservedLineTrail mais abaixo.
+  const lineObservedVehicleTrails = new Map();
+
+  // Paradas de ônibus (GTFS stops.txt) próximas ao traçado DEDUZIDO — pro
+  // fallback de linhas sem itinerário oficial (ex: LECD154), que antes nunca
+  // mostravam nenhum ponto de ônibus (esses só vinham do traçado oficial, em
+  // selectBus). Busca só UMA vez por linha (best-effort, guardado em
+  // lineObservedStopsData) — ver ensureObservedStopsNear mais abaixo.
+  const lineObservedStopsData = new Map(); // code -> pontos[] já buscados no servidor (ou ausente = ainda não buscou)
+  const lineObservedStopLayers = new Map(); // code -> [L.CircleMarker, ...] atualmente no mapa
+  const lineObservedStopsFetching = new Set(); // codes com uma busca em andamento
+
+  // Paradas de ônibus perto do traçado OFICIAL do sentido atualmente
+  // selecionado de cada linha — antes só apareciam depois de clicar num
+  // ônibus específico (selectBus/route-info); agora aparecem assim que a
+  // linha é buscada, igual já acontecia pro traçado deduzido. Chave
+  // `${code}::${directionIndex}` porque as paradas mudam conforme o
+  // sentido (ida/volta) selecionado — ver ensureOfficialStopsNear.
+  const lineOfficialStopsData = new Map(); // chave -> pontos[] já buscados
+  const lineOfficialStopLayers = new Map(); // code -> [L.CircleMarker, ...] atualmente no mapa
+  const lineOfficialStopsFetching = new Set(); // chaves com uma busca em andamento
+
+  const LINE_TRAIL_MAX_POINTS = 4000;
+
+  // Agora o tracado deduzido e PERSISTIDO no Supabase (tabela line_trails)
+  // e compartilhado entre todos os usuarios logados, em vez de existir so
+  // na memoria do navegador desta aba: seedObservedTrail carrega o que ja
+  // foi acumulado por qualquer pessoa ao comecar a acompanhar uma linha, e
+  // syncObservedTrail manda os pontos novos observados aqui pro servidor.
+  // Ver README.
+
+  async function seedObservedTrail(code) {
+    try {
+      const resp = await authFetch(`/api/trail-points?linha=${encodeURIComponent(code)}`);
+      const data = await resp.json();
+      if (data.ok && Array.isArray(data.pontos) && data.pontos.length > 0) {
+        lineObservedTrails.set(code, data.pontos.slice(-LINE_TRAIL_MAX_POINTS));
+        lineObservedSynced.set(code, data.pontos.length);
+        renderObservedLineTrail(code);
+      }
+    } catch (err) {
+      // best-effort - sem o tracado salvo, a linha ainda funciona, so
+      // recomeca a deduzir do zero nesta sessao
+    }
+  }
+
+  function syncObservedTrail(code) {
+    const trail = lineObservedTrails.get(code);
+    if (!trail) return;
+    const jaEnviados = lineObservedSynced.get(code) || 0;
+    const novos = trail.slice(jaEnviados);
+    if (novos.length === 0) return;
+    lineObservedSynced.set(code, trail.length);
+    authFetch('/api/trail-points', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ linha: code, pontos: novos }),
+    }).catch(() => {
+      // silencioso - best-effort, falha de rede aqui so adia a
+      // persistencia desses pontos, nao afeta o mapa
+    });
+  }
+
+  // Desenha o traçado do sentido atualmente selecionado da linha `code`
+  // (ou todas as rotas conhecidas, se a linha não tiver separação por
+  // sentido no GTFS).
+  function drawCurrentDirectionRouteShape(code) {
+    if (lineRouteShapes.has(code)) return; // já desenhado
+    const info = trackedLines.get(code);
+    if (!info || !Array.isArray(info.rotas) || info.rotas.length === 0) return;
+    const color = lineColors.get(code);
+    if (!color) return;
+    const dirId = info.directions.length > 0 ? info.directions[info.currentIndex].directionId : null;
+    const layers = [];
+    for (const rota of info.rotas) {
+      const rotaDirId = rota.directionId !== undefined && rota.directionId !== null ? String(rota.directionId) : '0';
+      if (dirId !== null && rotaDirId !== dirId) continue;
+      const pl = L.polyline(rota.shape, { color, weight: 3, opacity: 0.45 }).addTo(linesRouteLayer);
+      layers.push(pl);
+    }
+    if (layers.length > 0) {
+      lineRouteShapes.set(code, layers);
+      ensureOfficialStopsNear(code);
+    }
+  }
+
+  // Concatena os pontos [lat, lon] de todas as rotas do sentido atualmente
+  // selecionado de uma linha (mesmo filtro de drawCurrentDirectionRouteShape
+  // acima) — usado pra buscar as paradas de ônibus perto desse traçado.
+  function getCurrentDirectionShapePoints(info) {
+    if (!info || !Array.isArray(info.rotas)) return [];
+    const dirId = info.directions.length > 0 ? info.directions[info.currentIndex].directionId : null;
+    const points = [];
+    for (const rota of info.rotas) {
+      const rotaDirId = rota.directionId !== undefined && rota.directionId !== null ? String(rota.directionId) : '0';
+      if (dirId !== null && rotaDirId !== dirId) continue;
+      if (Array.isArray(rota.shape)) points.push(...rota.shape);
+    }
+    return points;
+  }
+
+  // Busca (uma vez por linha+sentido, best-effort) as paradas de ônibus
+  // perto do traçado OFICIAL do sentido atualmente selecionado — antes só
+  // apareciam depois de clicar num ônibus específico. Chave por sentido
+  // porque as paradas mudam conforme o sentido (ida/volta) selecionado.
+  async function ensureOfficialStopsNear(code) {
+    const info = trackedLines.get(code);
+    if (!info || !info.rotas || info.rotas.length === 0) return;
+    const key = `${code}::${info.currentIndex}`;
+    if (lineOfficialStopsFetching.has(key)) return;
+    if (lineOfficialStopsData.has(key)) {
+      renderOfficialStops(code);
+      return;
+    }
+    const points = getCurrentDirectionShapePoints(info);
+    if (points.length < 2) return;
+    lineOfficialStopsFetching.add(key);
+    try {
+      const resp = await authFetch('/api/stops-near', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pontos: points }),
+      });
+      const data = await resp.json();
+      if (data.ok && Array.isArray(data.pontos)) {
+        lineOfficialStopsData.set(key, data.pontos);
+        if (trackedLines.has(code)) renderOfficialStops(code);
+      }
+    } catch (err) {
+      // best-effort — sem essas paradas, o traçado oficial ainda funciona normalmente
+    } finally {
+      lineOfficialStopsFetching.delete(key);
+    }
+  }
+
+  // Desenha os pontos de ônibus já buscados (lineOfficialStopsData) pro
+  // sentido atualmente selecionado de uma linha com itinerário oficial.
+  function renderOfficialStops(code) {
+    const info = trackedLines.get(code);
+    if (!info || !info.ativo) return;
+    if (lineOfficialStopLayers.has(code)) return; // já desenhado
+    const key = `${code}::${info.currentIndex}`;
+    const pontos = lineOfficialStopsData.get(key);
+    if (!pontos || pontos.length === 0) return;
+    const layers = pontos.map((ponto) =>
+      L.circleMarker([ponto.lat, ponto.lon], {
+        radius: 4,
+        color: '#2563eb',
+        weight: 2,
+        fillColor: '#ffffff',
+        fillOpacity: 1,
+      })
+        .addTo(linesRouteLayer)
+        .bindPopup(`<b>Ponto de ônibus</b><br/>${ponto.name || 'Sem nome'}`)
+    );
+    lineOfficialStopLayers.set(code, layers);
+  }
+
+  function hideOfficialStops(code) {
+    const layers = lineOfficialStopLayers.get(code);
+    if (!layers) return;
+    for (const layer of layers) linesRouteLayer.removeLayer(layer);
+    lineOfficialStopLayers.delete(code);
+  }
+
+  // Garante que o traçado do sentido atual de uma linha já tracked esteja
+  // desenhado (busca de novo se precisar) — usado ao reativar uma linha
+  // cujo traçado tinha sido escondido.
+  async function ensureRouteShape(code) {
+    if (lineRouteShapes.has(code)) return;
+    const info = trackedLines.get(code);
+    if (!info) return;
+    if (!info.rotas || info.rotas.length === 0) {
+      try {
+        const resp = await authFetch(`/api/route-shapes?linha=${encodeURIComponent(code)}`);
+        const data = await resp.json();
+        if (data.ok && Array.isArray(data.rotas)) info.rotas = data.rotas;
+      } catch (err) {
+        // silencioso — o traçado geral é só um complemento visual, não deve
+        // atrapalhar o resto do app se falhar
+      }
+      if (!trackedLines.has(code)) return; // pode ter sido removida enquanto isso carregava
+    }
+    drawCurrentDirectionRouteShape(code);
+  }
+
+  function hideRouteShape(code) {
+    const layers = lineRouteShapes.get(code);
+    if (layers) {
+      for (const layer of layers) linesRouteLayer.removeLayer(layer);
+      lineRouteShapes.delete(code);
+    }
+    hideOfficialStops(code);
+  }
+
+  // Distância aproximada (Haversine, em metros) entre dois pontos [lat, lon]
+  // — usada só pra decidir onde "quebrar" o traçado deduzido (ver abaixo),
+  // não precisa da precisão da versão no servidor (lib/gtfs.js).
+  function haversineMetersClient(lat1, lon1, lat2, lon2) {
+    const R = 6371000;
+    const toRad = (d) => (d * Math.PI) / 180;
+    const dLat = toRad(lat2 - lat1);
+    const dLon = toRad(lon2 - lon1);
+    const a =
+      Math.sin(dLat / 2) ** 2 +
+      Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(a));
+  }
+
+  // Acima dessa distância entre dois pontos CONSECUTIVOS no array acumulado,
+  // a gente assume que não foi o mesmo ônibus se movendo (foi só a vez de
+  // outro veículo da linha entrar no array — lineObservedTrails mistura
+  // pontos de todos os veículos da linha, na ordem em que cada ciclo de
+  // polling os viu) e evita ligar os dois com uma linha reta — é isso que
+  // antes desenhava aqueles zigues-zagues cruzando o mapa inteiro (ex:
+  // LECD154, ligando um ônibus na Barra a outro em Copacabana). Generoso o
+  // bastante pra não cortar o traçado de um ônibus rápido entre dois ciclos
+  // de 20s (a ~60km/h isso é uns 330m).
+  const OBSERVED_TRAIL_SEGMENT_GAP_M = 600;
+
+  // Desenha (ou atualiza, se já existir) o traçado deduzido ao vivo de uma
+  // linha sem itinerário oficial — um polyline tracejado POR VEÍCULO
+  // (lineObservedVehicleTrails), não uma única linha misturando todo mundo.
+  // Cada trajeto de veículo ainda é quebrado em vários segmentos sempre que
+  // dois pontos consecutivos passam de OBSERVED_TRAIL_SEGMENT_GAP_M (defesa
+  // extra contra saltos de GPS) — mas agora isso raramente acontece, já que
+  // os pontos de um mesmo veículo naturalmente formam um trajeto contínuo.
+  // Fica mais completo aos poucos, conforme cada ônibus é visto de novo em
+  // ciclos de polling sucessivos (por isso só aparece depois de ver o mesmo
+  // veículo pelo menos 2 vezes).
+  function renderObservedLineTrail(code) {
+    const info = trackedLines.get(code);
+    if (!info || !info.ativo) return;
+    const byVehicle = lineObservedVehicleTrails.get(code);
+    if (!byVehicle || byVehicle.size === 0) return;
+    const color = lineColors.get(code) || '#64748b';
+
+    const oldLayers = lineObservedLayers.get(code);
+    if (oldLayers) {
+      for (const layer of oldLayers) linesRouteLayer.removeLayer(layer);
+    }
+
+    const newLayers = [];
+    for (const vTrail of byVehicle.values()) {
+      if (vTrail.length < 2) continue;
+      let segment = [vTrail[0]];
+      for (let i = 1; i < vTrail.length; i++) {
+        const [lat1, lon1] = vTrail[i - 1];
+        const [lat2, lon2] = vTrail[i];
+        if (haversineMetersClient(lat1, lon1, lat2, lon2) > OBSERVED_TRAIL_SEGMENT_GAP_M) {
+          if (segment.length >= 2) {
+            newLayers.push(L.polyline(segment, { color, weight: 3, opacity: 0.4, dashArray: '2 8' }).addTo(linesRouteLayer));
+          }
+          segment = [vTrail[i]];
+        } else {
+          segment.push(vTrail[i]);
+        }
+      }
+      if (segment.length >= 2) {
+        newLayers.push(L.polyline(segment, { color, weight: 3, opacity: 0.4, dashArray: '2 8' }).addTo(linesRouteLayer));
+      }
+    }
+    lineObservedLayers.set(code, newLayers);
+
+    const flatTrail = lineObservedTrails.get(code);
+    if (flatTrail) {
+      ensureObservedStopsNear(code, flatTrail);
+      renderObservedStops(code);
+    }
+  }
+
+  function hideObservedLineTrail(code) {
+    const layers = lineObservedLayers.get(code);
+    if (layers) {
+      for (const layer of layers) linesRouteLayer.removeLayer(layer);
+      lineObservedLayers.delete(code);
+    }
+    hideObservedStops(code);
+  }
+
+  // Desenha os pontos de ônibus já buscados (lineObservedStopsData) pra uma
+  // linha sem itinerário oficial — chamado depois que ensureObservedStopsNear
+  // termina, e também ao reativar uma linha cujos pontos já tinham sido
+  // buscados antes (não busca de novo, só redesenha a partir do cache).
+  function renderObservedStops(code) {
+    const info = trackedLines.get(code);
+    if (!info || !info.ativo) return;
+    if (lineObservedStopLayers.has(code)) return; // já desenhado
+    const pontos = lineObservedStopsData.get(code);
+    if (!pontos || pontos.length === 0) return;
+    const layers = pontos.map((ponto) =>
+      L.circleMarker([ponto.lat, ponto.lon], {
+        radius: 4,
+        color: '#2563eb',
+        weight: 2,
+        fillColor: '#ffffff',
+        fillOpacity: 1,
+      })
+        .addTo(linesRouteLayer)
+        .bindPopup(`<b>Ponto de ônibus</b><br/>${ponto.name || 'Sem nome'}`)
+    );
+    lineObservedStopLayers.set(code, layers);
+  }
+
+  function hideObservedStops(code) {
+    const layers = lineObservedStopLayers.get(code);
+    if (!layers) return;
+    for (const layer of layers) linesRouteLayer.removeLayer(layer);
+    lineObservedStopLayers.delete(code);
+  }
+
+  // Busca (uma única vez por linha, best-effort) as paradas de ônibus perto
+  // do traçado deduzido ao vivo — só dispara quando já tem pontos suficientes
+  // acumulados pra fazer sentido buscar. Ver api/stops-near.js.
+  async function ensureObservedStopsNear(code, trail) {
+    if (lineObservedStopsData.has(code) || lineObservedStopsFetching.has(code)) return;
+    if (!trail || trail.length < 8) return;
+    lineObservedStopsFetching.add(code);
+    try {
+      const resp = await authFetch('/api/stops-near', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pontos: trail }),
+      });
+      const data = await resp.json();
+      if (data.ok && Array.isArray(data.pontos)) {
+        lineObservedStopsData.set(code, data.pontos);
+        if (trackedLines.has(code)) renderObservedStops(code);
+      }
+    } catch (err) {
+      // best-effort — sem os pontos próximos, o traçado deduzido ainda
+      // funciona normalmente, só sem essas paradas marcadas
+    } finally {
+      lineObservedStopsFetching.delete(code);
+    }
+  }
+
+  function pushLineObservedPoint(code, ordem, lat, lon) {
+    if (typeof lat !== 'number' || typeof lon !== 'number') return;
+
+    // Traçado plano (persistido no servidor, todos os veículos misturados em
+    // ordem de chegada) — usado só pra buscar paradas próximas, não pra
+    // desenhar a linha (ver renderObservedLineTrail).
+    let trail = lineObservedTrails.get(code);
+    if (!trail) {
+      trail = [];
+      lineObservedTrails.set(code, trail);
+    }
+    const last = trail[trail.length - 1];
+    // Mesmo critério do pushTrail (por veículo): só guarda se moveu de
+    // verdade, evita empilhar pontos idênticos de ônibus parado no trânsito.
+    if (!last || Math.abs(last[0] - lat) > 0.00005 || Math.abs(last[1] - lon) > 0.00005) {
+      trail.push([lat, lon]);
+      if (trail.length > LINE_TRAIL_MAX_POINTS) trail.shift();
+    }
+
+    // Traçado por veículo (só nesta sessão, não persistido) — usado pra
+    // desenhar o trajeto deduzido de forma coerente (ver renderObservedLineTrail).
+    if (ordem) {
+      let byVehicle = lineObservedVehicleTrails.get(code);
+      if (!byVehicle) {
+        byVehicle = new Map();
+        lineObservedVehicleTrails.set(code, byVehicle);
+      }
+      let vTrail = byVehicle.get(ordem);
+      if (!vTrail) {
+        vTrail = [];
+        byVehicle.set(ordem, vTrail);
+      }
+      const vLast = vTrail[vTrail.length - 1];
+      if (!vLast || Math.abs(vLast[0] - lat) > 0.00005 || Math.abs(vLast[1] - lon) > 0.00005) {
+        vTrail.push([lat, lon]);
+        if (vTrail.length > TRAIL_MAX_POINTS) vTrail.shift();
+      }
+    }
+  }
+
+  function colorForBus(linha) {
+    const key = (linha || '').toUpperCase();
+    return lineColors.get(key) || '#64748b';
+  }
+
+  function getActiveLinhasParam() {
+    const codes = [];
+    for (const [code, info] of trackedLines.entries()) {
+      if (info.ativo) codes.push(code);
+    }
+    return codes.join(',');
+  }
+
+  // Diz se um ônibus deve aparecer no mapa dado o estado atual dos chips.
+  // Só o sentido ATUALMENTE selecionado da linha (chip "⇄") fica visível —
+  // quando a API conseguiu classificar a direção real do veículo
+  // (bus.directionId), casa exatamente com esse sentido. Quando não dá pra
+  // classificar (linha fora do GTFS, ex: LECD154, ou linha sem separação
+  // por sentido conhecida), mostra qualquer ônibus da linha enquanto ela
+  // estiver ativa.
+  function isBusVisible(bus) {
+    const code = (bus.linha || '').toUpperCase();
+    const info = trackedLines.get(code);
+    if (!info || !info.ativo) return false;
+    if (info.directions.length < 2) return true;
+    if (bus.directionId === undefined || bus.directionId === null) return true;
+    const currentDirId = info.directions[info.currentIndex].directionId;
+    return String(bus.directionId) === currentDirId;
+  }
+
+  // Monta o rótulo "origem → destino" do sentido atual de uma linha: o
+  // destino é o headsign do sentido selecionado, e a origem é o headsign do
+  // OUTRO sentido (o "outro terminal" da linha) — ex: sentido com headsign
+  // "Usina" vira "Leblon → Usina" (usando o headsign "Leblon" do sentido
+  // oposto como origem).
+  function directionLabel(info) {
+    if (info.directions.length >= 2) {
+      const cur = info.directions[info.currentIndex];
+      const other = info.directions[(info.currentIndex + 1) % info.directions.length];
+      if (cur.headsign && other.headsign) return `${info.code} ${other.headsign} → ${cur.headsign}`;
+      if (cur.headsign) return `${info.code} ${cur.headsign}`;
+    } else if (info.directions.length === 1 && info.directions[0].headsign) {
+      return `${info.code} ${info.directions[0].headsign}`;
+    }
+    return info.code;
+  }
+
+  function renderLegend() {
+    if (trackedLines.size === 0) {
+      bottomBarEl.classList.remove('visible');
+      bottomBarListEl.innerHTML = '';
+      return;
+    }
+    bottomBarEl.classList.add('visible');
+    bottomBarListEl.innerHTML = '';
+    for (const [code, info] of trackedLines.entries()) {
+      const label = directionLabel(info);
+      const color = lineColors.get(code) || '#64748b';
+      const canFlip = info.directions.length > 1;
+
+      const chip = document.createElement('div');
+      chip.className = 'linha-chip' + (info.ativo ? '' : ' inativa');
+      chip.title = info.ativo ? `Clique pra ocultar ${label}` : `Clique pra mostrar ${label}`;
+      if (!info.rotas || info.rotas.length === 0) {
+        chip.title += ' — sem itinerário oficial: o traçado tracejado é deduzido ao vivo a partir do GPS e fica mais completo com o tempo — compartilhado entre todos que acompanham essa linha.';
+      }
+
+      const swatch = document.createElement('span');
+      swatch.className = 'swatch';
+      swatch.style.background = color;
+      swatch.addEventListener('click', () => toggleLineVisibility(code));
+
+      const nome = document.createElement('span');
+      nome.className = 'linha-nome';
+      nome.textContent = label;
+      nome.addEventListener('click', () => toggleLineVisibility(code));
+
+      const flipButton = document.createElement('button');
+      flipButton.type = 'button';
+      flipButton.className = 'flip-btn';
+      flipButton.disabled = !canFlip;
+      flipButton.title = canFlip ? 'Inverter sentido' : 'Só um sentido conhecido pra essa linha';
+      flipButton.textContent = '⇄';
+      flipButton.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleLineDirection(code);
+      });
+
+      const deleteButton = document.createElement('button');
+      deleteButton.type = 'button';
+      deleteButton.className = 'pin-btn';
+      deleteButton.title = `Remover ${label}`;
+      deleteButton.textContent = '✕';
+      deleteButton.addEventListener('click', (e) => {
+        e.stopPropagation();
+        deleteLine(code);
+      });
+
+      chip.appendChild(swatch);
+      chip.appendChild(flipButton);
+      chip.appendChild(nome);
+      chip.appendChild(deleteButton);
+      bottomBarListEl.appendChild(chip);
+    }
+  }
+
+  function removeMarkersForLine(code) {
+    for (const [ordem, entry] of Array.from(markers.entries())) {
+      if ((entry.linha || '').toUpperCase() === code) {
+        map.removeLayer(entry.marker);
+        markers.delete(ordem);
+        if (ordem === selectedOrdem) clearRoute();
+      }
+    }
+  }
+
+  // Chip 1 (cor + número + sentido): liga/desliga a linha inteira.
+  function toggleLineVisibility(code) {
+    const info = trackedLines.get(code);
+    if (!info) return;
+    info.ativo = !info.ativo;
+    renderLegend();
+
+    if (info.ativo) {
+      ensureRouteShape(code);
+      renderObservedLineTrail(code);
+    } else {
+      hideRouteShape(code);
+      hideObservedLineTrail(code);
+      removeMarkersForLine(code);
+    }
+    poll();
+    ensurePolling();
+  }
+
+  // Chip 2 (⇄): alterna qual dos sentidos conhecidos da linha está
+  // selecionado — troca o traçado desenhado e passa a filtrar os ônibus
+  // pelo novo sentido.
+  function toggleLineDirection(code) {
+    const info = trackedLines.get(code);
+    if (!info || info.directions.length < 2) return;
+    info.currentIndex = (info.currentIndex + 1) % info.directions.length;
+    renderLegend();
+
+    hideRouteShape(code);
+    if (info.ativo) ensureRouteShape(code);
+    // Remove os marcadores na hora (não espera os ciclos de "sumiu da
+    // fonte") — o próximo poll já traz só os ônibus do novo sentido.
+    removeMarkersForLine(code);
+    poll();
+  }
+
+  // Chip 3 (✕): remove a linha inteira da lista (mesmo comportamento de
+  // "desafixar" de antes).
+  function deleteLine(code) {
+    trackedLines.delete(code);
+    hideRouteShape(code); // também esconde as paradas oficiais (hideOfficialStops)
+    hideObservedLineTrail(code);
+    lineObservedTrails.delete(code);
+    lineObservedVehicleTrails.delete(code);
+    lineObservedSynced.delete(code);
+    lineObservedStopsData.delete(code);
+    lineObservedStopsFetching.delete(code);
+    for (const key of Array.from(lineOfficialStopsData.keys())) {
+      if (key.startsWith(`${code}::`)) lineOfficialStopsData.delete(key);
+    }
+    for (const key of Array.from(lineOfficialStopsFetching)) {
+      if (key.startsWith(`${code}::`)) lineOfficialStopsFetching.delete(key);
+    }
+    removeMarkersForLine(code);
+    lineColors.delete(code);
+    renderLegend();
+  }
+
+  // As atualizações são sempre automáticas (a cada POLL_MS) — não existe
+  // mais opção de desligar, então basta garantir que o timer esteja rodando.
+  function ensurePolling() {
+    if (!pollTimer) {
+      pollTimer = setInterval(poll, POLL_MS);
+    }
+  }
+
+  // Adiciona uma linha (uma de cada vez) à lista de linhas acompanhadas,
+  // sem remover as que já estavam lá. Busca o(s) traçado(s) oficiais pra
+  // descobrir os sentidos (ida/volta) conhecidos — o chip "⇄" deixa
+  // escolher qual deles fica visível, um de cada vez. Se a linha não tiver
+  // itinerário oficial ou não der pra separar por direção, mostra tudo que
+  // tiver, sem filtro de sentido.
+  async function addLinhaCode(code) {
+    if (trackedLines.has(code)) {
+      const info = trackedLines.get(code);
+      info.ativo = true;
+      ensureRouteShape(code);
+      renderLegend();
+      poll();
+      ensurePolling();
+      return;
+    }
+
+    const color = PALETTE[lineColors.size % PALETTE.length];
+    lineColors.set(code, color);
+
+    let rotas = [];
+    try {
+      const resp = await authFetch(`/api/route-shapes?linha=${encodeURIComponent(code)}`);
+      const data = await resp.json();
+      if (data.ok && Array.isArray(data.rotas)) rotas = data.rotas;
+    } catch (err) {
+      // best-effort — sem traçado oficial, a linha ainda funciona (só sem
+      // desenhar itinerário nem separar por direção)
+    }
+
+    const byDirection = new Map(); // directionId -> headsign
+    for (const rota of rotas) {
+      const dirId = rota.directionId !== undefined && rota.directionId !== null ? String(rota.directionId) : '0';
+      if (!byDirection.has(dirId)) byDirection.set(dirId, rota.headsign || null);
+    }
+    const directions = Array.from(byDirection.entries())
+      .map(([directionId, headsign]) => ({ directionId, headsign }))
+      .sort((a, b) => {
+        const an = Number(a.directionId);
+        const bn = Number(b.directionId);
+        if (Number.isFinite(an) && Number.isFinite(bn)) return an - bn;
+        return a.directionId.localeCompare(b.directionId);
+      });
+
+    trackedLines.set(code, { code, rotas, directions, currentIndex: 0, ativo: true });
+    drawCurrentDirectionRouteShape(code);
+    if (rotas.length === 0) seedObservedTrail(code);
+
+    renderLegend();
+    poll();
+    ensurePolling();
+  }
+
+  // Trava o campo (mantendo o código digitado visível) e faz a lupa pulsar
+  // enquanto addLinhaCode está processando a busca — dá um feedback visual
+  // claro de "carregando" em vez do campo simplesmente esvaziar na hora e
+  // não dar nenhum sinal do que tá acontecendo até o traçado aparecer.
+  function setSearchLoading(isLoading) {
+    linhasInput.disabled = isLoading;
+    applyBtn.disabled = isLoading;
+    applyBtn.classList.toggle('loading', isLoading);
+  }
+
+  async function addLinha() {
+    const code = linhasInput.value.trim().toUpperCase();
+    if (!code) return;
+    hideSuggestions();
+    setSearchLoading(true);
+    try {
+      await addLinhaCode(code);
+    } finally {
+      setSearchLoading(false);
+      linhasInput.value = '';
+      updateLinhaStatus();
+    }
+  }
+
+  // "Última posição" mostra só minutos:segundos (nunca hora) — com o fuso
+  // corrigido no servidor (lib/gps.js) isso fica sempre pequeno na prática,
+  // mas o formato em si não inclui hora de propósito.
+  function formatMinSec(ms) {
+    const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+    const mm = Math.floor(totalSeconds / 60);
+    const ss = totalSeconds % 60;
+    return `${mm}:${String(ss).padStart(2, '0')}`;
+  }
+
+  function formatElapsed(iso) {
+    if (!iso) return '—';
+    const then = new Date(iso).getTime();
+    if (!Number.isFinite(then)) return '—';
+    return `${formatMinSec(Date.now() - then)} atrás`;
+  }
+
+  function renderCountdown() {
+    if (nextPollAtMs == null) return;
+    const remaining = Math.max(0, Math.ceil((nextPollAtMs - Date.now()) / 1000));
+    refreshNoteEl.textContent = `Próx. atualização em ${remaining}s`;
+  }
+
+  function startTicking() {
+    if (tickTimer) return;
+    tickTimer = setInterval(() => {
+      renderCountdown();
+      if (openPopupOrdem) {
+        const entry = markers.get(openPopupOrdem);
+        if (entry && entry.marker.isPopupOpen()) {
+          entry.marker.setPopupContent(popupHtml(entry.marker._bus));
+        }
+      }
+    }, 1000);
+  }
+
+  function popupHtml(bus) {
+    const itinerarioLine = (bus.shapeId || bus.routeId)
+      ? ''
+      : '<br/><em>Itinerário indisponível para este veículo</em>';
+    return `<b>Linha ${bus.linha ?? '—'}</b><br/>` +
+      `Veículo: ${bus.ordem ?? '—'}<br/>` +
+      `Última posição: ${formatElapsed(bus.datahora)}` +
+      itinerarioLine;
+  }
+
+  function arrowIcon(color, direcaoDeg) {
+    const rot = typeof direcaoDeg === 'number' && Number.isFinite(direcaoDeg) ? direcaoDeg : 0;
+    return L.divIcon({
+      className: 'bus-arrow-icon',
+      iconSize: [30, 30],
+      iconAnchor: [15, 15],
+      html: `<div class="arrow-wrap" style="transform:rotate(${rot}deg);">` +
+        `<svg width="27" height="27" viewBox="0 0 24 24">` +
+        `<path d="M12 2 L20 21 L12 16.5 L4 21 Z" fill="${color}" stroke="#ffffff" stroke-width="1.5" stroke-linejoin="round"/>` +
+        `</svg></div>`,
+    });
+  }
+
+  // Atualiza cor/rotação de um marcador JÁ existente sem recriar o ícone
+  // (recriar via setIcon trocaria o elemento DOM inteiro e quebraria a
+  // transição CSS de posição/rotação — o "arrastão" suave só funciona se o
+  // mesmo elemento continuar lá, só com o transform mudando).
+  function updateMarkerVisual(marker, color, direcaoDeg) {
+    const el = marker.getElement();
+    if (!el) return;
+    const rot = typeof direcaoDeg === 'number' && Number.isFinite(direcaoDeg) ? direcaoDeg : 0;
+    const wrap = el.querySelector('.arrow-wrap');
+    if (wrap) wrap.style.transform = `rotate(${rot}deg)`;
+    const path = el.querySelector('svg path');
+    if (path) path.setAttribute('fill', color);
+  }
+
+  async function poll() {
+    const linhas = getActiveLinhasParam();
+    nextPollAtMs = Date.now() + POLL_MS;
+    renderCountdown();
+    if (!linhas) return;
+
+    try {
+      const resp = await authFetch(`/api/buses?linhas=${encodeURIComponent(linhas)}`);
+      const data = await resp.json();
+
+      if (!resp.ok || !data.ok) {
+        showError(data.erro || `Erro HTTP ${resp.status}`);
+        return;
+      }
+
+      hideError();
+      if (data.avisoFonte) {
+        showError(`Aviso: última atualização da fonte falhou (${data.avisoFonte}). Mostrando o último dado disponível.`, true);
+      }
+
+      applyBusData(data.onibus);
+
+      if (!firstLoadDone) {
+        firstLoadDone = true;
+        fitToMarkersOnce();
+      }
+    } catch (err) {
+      showError('Não foi possível falar com o servidor local: ' + err.message);
+    }
+  }
+
+  function fitToMarkersOnce() {
+    const latlngs = Array.from(markers.values()).map(m => m.marker.getLatLng());
+    if (latlngs.length > 0) {
+      map.fitBounds(L.latLngBounds(latlngs), { padding: [40, 40], maxZoom: 14 });
+    }
+  }
+
+  function pushTrail(ordem, lat, lon) {
+    if (typeof lat !== 'number' || typeof lon !== 'number') return;
+    let trail = vehicleTrails.get(ordem);
+    if (!trail) {
+      trail = [];
+      vehicleTrails.set(ordem, trail);
+    }
+    const last = trail[trail.length - 1];
+    // Só guarda o ponto se o ônibus realmente se moveu (evita empilhar
+    // pontos idênticos enquanto ele está parado, ex: no trânsito/farol).
+    if (!last || Math.abs(last[0] - lat) > 0.00005 || Math.abs(last[1] - lon) > 0.00005) {
+      trail.push([lat, lon]);
+      if (trail.length > TRAIL_MAX_POINTS) trail.shift();
+    }
+  }
+
+  function applyBusData(buses) {
+    const seen = new Set();
+    const linesToRedraw = new Set();
+
+    for (const bus of buses) {
+      if (!bus.ordem) continue;
+
+      // Ônibus real, mas a direção dele (quando dá pra saber) está com o
+      // chip desligado (ex: usuário só quer ver "415 Usina") — remove na
+      // hora, não espera os ciclos de "sumiu da fonte".
+      if (!isBusVisible(bus)) {
+        if (markers.has(bus.ordem)) {
+          const entry = markers.get(bus.ordem);
+          map.removeLayer(entry.marker);
+          markers.delete(bus.ordem);
+          if (bus.ordem === selectedOrdem) clearRoute();
+        }
+        continue;
+      }
+
+      seen.add(bus.ordem);
+      const color = colorForBus(bus.linha);
+      const latlng = [bus.latitude, bus.longitude];
+      pushTrail(bus.ordem, bus.latitude, bus.longitude);
+
+      // Linha sem itinerário oficial (GTFS não tem o traçado dela) — vai
+      // acumulando a posição de cada ônibus visto pra ir desenhando um
+      // traçado aproximado da linha inteira (ver renderObservedLineTrail).
+      const lineCode = (bus.linha || '').toUpperCase();
+      const lineInfo = trackedLines.get(lineCode);
+      if (lineInfo && (!lineInfo.rotas || lineInfo.rotas.length === 0)) {
+        pushLineObservedPoint(lineCode, bus.ordem, bus.latitude, bus.longitude);
+        linesToRedraw.add(lineCode);
+      }
+
+      if (markers.has(bus.ordem)) {
+        const entry = markers.get(bus.ordem);
+        // setLatLng (não setIcon) é o que permite a transição CSS de
+        // posição animar suavemente — ver updateMarkerVisual acima.
+        entry.marker.setLatLng(latlng);
+        updateMarkerVisual(entry.marker, color, bus.direcao);
+        entry.marker.setPopupContent(popupHtml(bus));
+        entry.marker._bus = bus;
+        entry.missedCycles = 0;
+        entry.linha = bus.linha;
+      } else {
+        const marker = L.marker(latlng, { icon: arrowIcon(color, bus.direcao) })
+          .addTo(map)
+          .bindPopup(popupHtml(bus));
+        marker._bus = bus;
+        marker.on('click', () => {
+          openPopupOrdem = marker._bus.ordem;
+          selectBus(marker._bus);
+        });
+        markers.set(bus.ordem, { marker, linha: bus.linha, missedCycles: 0 });
+      }
+    }
+
+    // veículos que sumiram desta leitura: incrementa contador e remove após N ciclos
+    for (const [ordem, entry] of markers.entries()) {
+      if (!seen.has(ordem)) {
+        entry.missedCycles += 1;
+        if (entry.missedCycles >= STALE_AFTER_MISSES) {
+          map.removeLayer(entry.marker);
+          markers.delete(ordem);
+          vehicleTrails.delete(ordem);
+          if (ordem === selectedOrdem) clearRoute();
+        }
+      }
+    }
+
+    for (const code of linesToRedraw) {
+      renderObservedLineTrail(code);
+      syncObservedTrail(code);
+    }
+  }
+
+  // Fallback pra quando não existe itinerário oficial (ex: LECD154, uma
+  // linha real em operação mas ainda fora do cadastro GTFS do mês): em vez
+  // de só mostrar erro, desenha o trajeto observado ao vivo desse veículo
+  // (pontos reais de GPS acumulados desde que ele começou a ser acompanhado
+  // nesta sessão) — deixando claro que não é o traçado oficial da linha.
+  function drawInferredTrail(bus, prefixMsg) {
+    if (selectedOrdem !== bus.ordem) return;
+    const trail = vehicleTrails.get(bus.ordem);
+    const prefix = prefixMsg ? `${prefixMsg} ` : '';
+    if (!trail || trail.length < 2) {
+      routeInfoTextEl.textContent = `${prefix}Itinerário oficial indisponível para este veículo — acompanhando pra desenhar o trajeto observado ao vivo (ainda sem posições suficientes).`;
+      return;
+    }
+    L.polyline(trail, { color: '#64748b', weight: 4, opacity: 0.85, dashArray: '2 8' }).addTo(routeLayer);
+    routeInfoTextEl.textContent = `${prefix}Sem itinerário oficial: mostrando o trajeto observado ao vivo deste ônibus (${trail.length} posições reais desde que começou a ser acompanhado nesta sessão) — não é o traçado oficial da linha.`;
+    // Sem shape oficial não dá pra usar getStopsNear do jeito normal (que
+    // precisa de um traçado do GTFS) — manda o próprio trajeto observado
+    // deste veículo como aproximação, pra pelo menos mostrar as paradas
+    // realmente perto de onde ele passou. Best-effort, não bloqueia o resto.
+    fetchAndRenderStopsNear(bus.ordem, trail);
+  }
+
+  // Busca paradas de ônibus perto de um trajeto observado (sem shape oficial)
+  // e desenha no routeLayer — usado só pelo fallback acima (drawInferredTrail,
+  // 1 veículo específico). Confere se o ônibus ainda está selecionado depois
+  // de esperar a resposta, pra não desenhar pontos de uma seleção antiga.
+  async function fetchAndRenderStopsNear(ordem, trail) {
+    try {
+      const resp = await authFetch('/api/stops-near', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pontos: trail }),
+      });
+      const data = await resp.json();
+      if (selectedOrdem !== ordem) return; // usuário já selecionou outro ônibus enquanto isso carregava
+      if (data.ok && Array.isArray(data.pontos)) {
+        for (const ponto of data.pontos) {
+          L.circleMarker([ponto.lat, ponto.lon], {
+            radius: 5,
+            color: '#2563eb',
+            weight: 2,
+            fillColor: '#ffffff',
+            fillOpacity: 1,
+          })
+            .addTo(routeLayer)
+            .bindPopup(`<b>Ponto de ônibus</b><br/>${ponto.name || 'Sem nome'}`);
+        }
+      }
+    } catch (err) {
+      // best-effort — sem esses pontos, o trajeto observado ainda aparece normalmente
+    }
+  }
+
+  async function selectBus(bus) {
+    if (!bus || !bus.ordem) return;
+    selectedOrdem = bus.ordem;
+    routeLayer.clearLayers();
+    routeInfoEl.hidden = false;
+
+    if (!bus.shapeId && !bus.routeId) {
+      drawInferredTrail(bus);
+      return;
+    }
+
+    routeInfoTextEl.textContent = `Carregando itinerário do ônibus ${bus.ordem} (linha ${bus.linha ?? '—'})...`;
+
+    try {
+      const params = new URLSearchParams();
+      if (bus.shapeId) params.set('shapeId', bus.shapeId);
+      if (bus.routeId) params.set('routeId', bus.routeId);
+      // Manda a posição atual do ônibus pro servidor poder escolher o
+      // sentido (ida/volta) geograficamente mais próximo — o shape_id que
+      // vem no GPS às vezes não reflete o sentido real da viagem (algumas
+      // linhas reportam o mesmo shape_id pra todos os veículos, mesmo
+      // indo/voltando ao mesmo tempo).
+      if (typeof bus.latitude === 'number') params.set('lat', bus.latitude);
+      if (typeof bus.longitude === 'number') params.set('lon', bus.longitude);
+      const resp = await authFetch(`/api/route-info?${params.toString()}`);
+      const data = await resp.json();
+
+      if (selectedOrdem !== bus.ordem) return; // usuário já selecionou outro ônibus enquanto isso carregava
+
+      if (!resp.ok || !data.ok) {
+        drawInferredTrail(bus, `Itinerário oficial indisponível (${data.erro || 'erro desconhecido'}).`);
+        return;
+      }
+
+      // Mais opacidade e mais grossura que o traçado "geral" da linha
+      // (linesRouteLayer, desenhado assim que a linha é buscada) — assim dá
+      // pra distinguir visualmente o trajeto exato desta viagem específica
+      // (só o sentido que esse ônibus está fazendo agora) dos traçados
+      // gerais de ida/volta da linha, que já ficam visíveis (com menos
+      // destaque) assim que a linha é buscada/acompanhada.
+      const destStyle = { color: '#1e293b', weight: 5, opacity: 0.9 };
+      L.polyline(data.shape, destStyle).addTo(routeLayer);
+
+      for (const ponto of data.pontos) {
+        L.circleMarker([ponto.lat, ponto.lon], {
+          radius: 5,
+          color: '#2563eb',
+          weight: 2,
+          fillColor: '#ffffff',
+          fillOpacity: 1,
+        })
+          .addTo(routeLayer)
+          .bindPopup(`<b>Ponto de ônibus</b><br/>${ponto.name || 'Sem nome'}`);
+      }
+
+      routeInfoTextEl.textContent = data.aproximado
+        ? 'Traçado aproximado: o veículo não trouxe um itinerário exato, mostrando outro traçado conhecido da mesma linha.'
+        : '';
+    } catch (err) {
+      if (selectedOrdem !== bus.ordem) return;
+      drawInferredTrail(bus, 'Não foi possível carregar o itinerário oficial (' + err.message + ').');
+    }
+  }
+
+  function clearRoute() {
+    selectedOrdem = null;
+    routeLayer.clearLayers();
+    routeInfoEl.hidden = true;
+    routeInfoTextEl.textContent = '';
+  }
+
+  // Erros aparecem num alert() nativo do navegador em vez de uma faixa fixa
+  // no painel. Guarda a última mensagem alertada pra não repetir o mesmo
+  // alert a cada ciclo de 20s enquanto o mesmo erro persistir — só alerta
+  // de novo se a mensagem mudar ou se, entre uma tentativa e outra, tiver
+  // dado certo (hideError reseta o controle).
+  let lastAlertedError = null;
+  function showError(msg) {
+    if (msg === lastAlertedError) return;
+    lastAlertedError = msg;
+    alert(msg);
+  }
+  function hideError() {
+    lastAlertedError = null;
+  }
+
+  // --- Autocomplete de linhas (best-effort: se falhar, o campo continua
+  // funcionando normalmente, só sem sugestões) ---
+  // Duas fontes, que não necessariamente batem: linhasConhecidas vem do
+  // cadastro GTFS oficial (mensal — dá pra desenhar itinerário), e
+  // linhasAtivas vem de quais códigos têm ônibus reportando posição AGORA
+  // na API de GPS ao vivo (existem linhas extras/provisórias circulando de
+  // verdade que ainda não entraram no cadastro do mês). Sem consultar as
+  // duas, uma linha real em operação mas fora do cadastro (ex: LECD154)
+  // aparecia como "não encontrada", o que é enganoso.
+  let linhasConhecidas = [];
+  let linhasAtivas = [];
+  authFetch('/api/linhas')
+    .then((r) => r.json())
+    .then((data) => { if (data.ok) { linhasConhecidas = data.linhas; updateLinhaStatus(); } })
+    .catch(() => {});
+  authFetch('/api/linhas-ativas')
+    .then((r) => r.json())
+    .then((data) => { if (data.ok) { linhasAtivas = data.linhas; updateLinhaStatus(); } })
+    .catch(() => {});
+
+  function renderSuggestions() {
+    const frag = linhasInput.value.trim().toUpperCase();
+    if (!frag) { hideSuggestions(); return; }
+
+    // Junta as duas fontes (cadastro GTFS + linhas ativas agora), preferindo
+    // a grafia do cadastro GTFS quando a mesma linha aparece nas duas.
+    const todas = new Map(); // CÓDIGO (maiúsculo) -> grafia original
+    for (const l of linhasAtivas) {
+      const upper = l.toUpperCase();
+      if (!todas.has(upper)) todas.set(upper, l);
+    }
+    for (const l of linhasConhecidas) {
+      todas.set(l.toUpperCase(), l);
+    }
+
+    // Linhas como "LECD154" têm o código digitado (154) no meio/fim do
+    // nome, não no começo — então além de "começa com", também casamos por
+    // "contém", com as que começam com o texto aparecendo primeiro.
+    const starts = [];
+    const contains = [];
+    for (const [upper, original] of todas.entries()) {
+      if (trackedLines.has(upper)) continue;
+      if (upper.startsWith(frag)) starts.push(original);
+      else if (upper.includes(frag)) contains.push(original);
+    }
+    const matches = starts.concat(contains).slice(0, 8);
+
+    if (matches.length === 0) { hideSuggestions(); return; }
+
+    suggestionsEl.innerHTML = matches
+      .map((l) => `<div class="item" data-linha="${l}">${l}</div>`)
+      .join('');
+    suggestionsEl.hidden = false;
+  }
+
+  // Feedback visual: diz se o que foi digitado bate com uma linha do
+  // cadastro GTFS (itinerário disponível), com uma linha sem itinerário
+  // cadastrado mas que tem ônibus circulando agora, ou com nenhuma das
+  // duas — sem precisar abrir a lista de sugestões.
+  function updateLinhaStatus() {
+    const val = linhasInput.value.trim().toUpperCase();
+    if (!val || (linhasConhecidas.length === 0 && linhasAtivas.length === 0)) {
+      linhaStatusEl.textContent = '';
+      linhaStatusEl.className = '';
+      return;
+    }
+    const noCadastro = linhasConhecidas.some((l) => l.toUpperCase() === val);
+    const emOperacao = linhasAtivas.some((l) => l.toUpperCase() === val);
+    if (noCadastro) {
+      linhaStatusEl.textContent = '✓ Linha encontrada';
+      linhaStatusEl.className = 'found';
+    } else if (emOperacao) {
+      linhaStatusEl.textContent = '✓ Linha em operação agora (sem itinerário oficial cadastrado)';
+      linhaStatusEl.className = 'warning';
+    } else {
+      linhaStatusEl.textContent = 'Nenhum ônibus ativo com esse código agora';
+      linhaStatusEl.className = 'notfound';
+    }
+  }
+
+  function hideSuggestions() {
+    suggestionsEl.hidden = true;
+    suggestionsEl.innerHTML = '';
+  }
+
+  function acceptSuggestion(linha) {
+    linhasInput.value = linha;
+    hideSuggestions();
+    linhasInput.focus();
+  }
+
+  linhasInput.addEventListener('input', () => { renderSuggestions(); updateLinhaStatus(); });
+  linhasInput.addEventListener('focus', renderSuggestions);
+  linhasInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      hideSuggestions();
+      addLinha();
+    } else if (e.key === 'Escape') {
+      hideSuggestions();
+    }
+  });
+  linhasInput.addEventListener('blur', () => {
+    // Pequeno atraso pra permitir que o clique numa sugestão seja
+    // processado antes do dropdown sumir.
+    setTimeout(hideSuggestions, 150);
+  });
+  // mousedown (em vez de click) evita que o blur do campo feche a lista
+  // antes do clique registrar.
+  suggestionsEl.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    const item = e.target.closest('.item');
+    if (item) acceptSuggestion(item.dataset.linha);
+  });
+
+  applyBtn.addEventListener('click', () => { hideSuggestions(); addLinha(); });
+  closeRouteBtn.addEventListener('click', clearRoute);
+
+  document.getElementById('logoutBtn').addEventListener('click', async () => {
+    await sb.auth.signOut();
+  });
+
+  startTicking();
+  } // fim de initApp()
+})();
+</script>
+</body>
+</html>
